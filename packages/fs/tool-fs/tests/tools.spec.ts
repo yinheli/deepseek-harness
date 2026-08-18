@@ -942,6 +942,20 @@ describe('sandbox escalation API (write/edit)', () => {
     }])
   })
 
+  it('redundant same-mode arguments preserve the standing policy without approval', async () => {
+    const { ctx, fs } = await setupConfining({ approval: true })
+    const prompted = vi.fn()
+    const blank = await call(ctx, 'write', { file_path: 'blank.txt', content: 'x', sandbox_permissions: 'workspace-write', justification: '' }, escalationAgent())
+    const missing = await call(ctx, 'write', { file_path: 'missing.txt', content: 'x', sandbox_permissions: 'workspace-write' }, escalationAgent())
+    expect(blank.isError).toBe(false)
+    expect(missing.isError).toBe(false)
+    expect(fs.stamped).toEqual([
+      { mode: 'workspace-write', workspaceRoot: resolve('/session-project'), sessionId: SessionId('sess-fs-esc') },
+      { mode: 'workspace-write', workspaceRoot: resolve('/session-project'), sessionId: SessionId('sess-fs-esc') },
+    ])
+    expect(prompted).not.toHaveBeenCalled()
+  })
+
   it('a rejected escalation fails closed with its own text and never mutates', async () => {
     const { ctx, fs } = await setupConfining({ approval: true })
     ctx.on('approval/request', () => Promise.resolve('rejected' as const))
@@ -967,7 +981,7 @@ describe('sandbox escalation API (write/edit)', () => {
 
   it('rejects the escalation argument pairing (one field without the other)', async () => {
     const { ctx } = await setupConfining()
-    const missing = await call(ctx, 'write', { file_path: 'a.txt', content: 'x', sandbox_permissions: 'workspace-write' }, escalationAgent())
+    const missing = await call(ctx, 'write', { file_path: 'a.txt', content: 'x', sandbox_permissions: 'danger-full-access' }, escalationAgent())
     expect(missing.isError).toBe(true)
     expect(text(missing)).toContain('sandbox_permissions requires a justification')
   })

@@ -625,16 +625,22 @@ describe('sandbox escalation through ctx.approval', () => {
     expect(schema.parameters.properties).not.toHaveProperty('sandbox_permissions')
   })
 
-  it('rejects injected escalation without a sandbox and non-widening escalation without prompting', async () => {
+  it('accepts redundant same-mode arguments without prompting and rejects narrower or invalid policy', async () => {
     const plain = await setup()
     expect(text(await call(plain.ctx, 'pwsh', escalate))).toContain('not available in this composition')
 
-    const { ctx } = await setupSandboxed(true)
+    const { ctx, bash } = await setupSandboxed(true)
     const prompted = vi.fn()
     ctx.on('approval/request', () => { prompted(); return Promise.resolve<ApprovalOutcome>('allowed-once') })
-    const result = await call(ctx, 'pwsh', { ...escalate, sandbox_permissions: 'workspace-write' }, sandboxAgent('workspace-write'))
-    expect(text(result)).toContain('not strictly wider')
+    const blank = await call(ctx, 'pwsh', { ...escalate, justification: '' }, sandboxAgent('workspace-write'))
+    const missing = await call(ctx, 'pwsh', { command: 'Write-Output ok', description: 'test escalation', sandbox_permissions: 'workspace-write' }, sandboxAgent('workspace-write'))
+    expect(blank.isError).toBe(false)
+    expect(missing.isError).toBe(false)
+    expect(bash.modes).toEqual(['workspace-write', 'workspace-write'])
     expect(prompted).not.toHaveBeenCalled()
+
+    const narrower = await call(ctx, 'pwsh', escalate, sandboxAgent('danger-full-access'))
+    expect(text(narrower)).toContain('not strictly wider')
 
     const malformed = sandboxAgent()
     ;(malformed.session.append as unknown as (
