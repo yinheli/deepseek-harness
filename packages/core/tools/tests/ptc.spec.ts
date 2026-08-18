@@ -2182,13 +2182,13 @@ describe('PTC standing file policy and sandbox outcomes', () => {
 })
 
 describe('per-program execution controls', () => {
-  async function controlledSetup(approval = true) {
+  async function controlledSetup(approval = true, mode: 'read-only' | 'workspace-write' | 'danger-full-access' = 'read-only') {
     const state = await setup()
     await state.ctx.plugin(SessionProjections)
-    await state.ctx.plugin(SandboxPolicy, { mode: 'read-only', workspaceRoot: process.cwd() })
+    await state.ctx.plugin(SandboxPolicy, { mode, workspaceRoot: process.cwd() })
     if (approval) await state.ctx.plugin(ApprovalService, { policy: 'ask' })
     Object.defineProperties(state.runtime, {
-      sandboxMode: { get: () => 'read-only' },
+      sandboxMode: { get: () => mode },
       executionInstructions: { get: () => 'Programs start with an empty environment.' },
       timeout: { get: () => ({ defaultMs: 120_000, maxMs: 600_000 }) },
     })
@@ -2262,13 +2262,37 @@ describe('per-program execution controls', () => {
     { sandbox_permissions: 'workspace-write' },
     { justification: 'Need writes' },
     { sandbox_permissions: 'workspace-write', justification: ' ' },
-    { sandbox_permissions: 'read-only', justification: 'No widening' },
   ])('rejects invalid escalation pairing or mode: %j', async (args) => {
     const { ctx, runtime, execute } = await controlledSetup()
     const ask = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
     ctx.on('approval/request', ask)
     try {
       expect((await execute(args)).isError).toBe(true)
+      expect(ask).not.toHaveBeenCalled()
+      expect(runtime.lastRequest).toBeUndefined()
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('accepts a redundant same-mode request without prompting and starts the program', async () => {
+    const { ctx, runtime, execute } = await controlledSetup(true, 'workspace-write')
+    const ask = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    ctx.on('approval/request', ask)
+    try {
+      expect((await execute({ sandbox_permissions: 'workspace-write' })).isError).toBe(false)
+      expect((await execute({ sandbox_permissions: 'workspace-write', justification: '' })).isError).toBe(false)
+      expect(ask).not.toHaveBeenCalled()
+      expect(runtime.lastRequest?.sandboxPolicy?.mode).toBe('workspace-write')
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('rejects a narrower request without prompting and starts nothing', async () => {
+    const { ctx, runtime, execute } = await controlledSetup(true, 'danger-full-access')
+    const ask = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    ctx.on('approval/request', ask)
+    try {
+      const result = await execute({ sandbox_permissions: 'workspace-write', justification: 'Narrow the program' })
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain('is not strictly wider than this call')
       expect(ask).not.toHaveBeenCalled()
       expect(runtime.lastRequest).toBeUndefined()
     } finally { await ctx.fiber.dispose() }

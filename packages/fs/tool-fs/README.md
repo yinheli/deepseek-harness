@@ -83,6 +83,8 @@ Failures are normalized as `Error: <message>` with a structured code preserved f
 
 This section explains the design decisions behind the tool suite and points at the code that realizes them; the observable behavior is fully covered in [Use this package](#use-this-package).
 
+When `ctx.fs.sandboxMode` reports confinement, write/edit advertise `sandbox_permissions` and `justification` and resolve approved retries through `ctx.approval`. Because their schema is registry-global while effective mode is per-session, a target equal to the current mode is accepted as redundant without justification or approval; only a genuine widening validates the paired reason and asks. Narrower and unknown targets still fail before mutation. The policy owner contributes capability-neutral standing policy; tool results retain operation-specific denial and retry guidance.
+
 ### Design concept
 
 The tools are the executor; policy is an event gate. The tools inject no policy service and inspect no cache — each mutation asks the single intent slot for its guard through `ctx.waterfall`, and each operation emits `fs/observed` only after it succeeded. Reads do exactly one provider `stat` (type and size routing plus the observed version); mutations do none, because the guard comes from the intent slot and the provider re-checks under its lock.

@@ -10,7 +10,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, ToolCallId, ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { PtcBindingFunction, PtcRunResult, PtcRunSandbox, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
-import { approveEscalation, ESCALATION_TARGETS, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+import { approveEscalation, ESCALATION_TARGETS } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import { deepFreeze, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -374,7 +374,6 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
         throw new Error('invalid description: expected a non-empty string')
       }
       const runtime = requireRuntime()
-      validateEscalationArgs(args.sandbox_permissions, args.justification)
       if (args.timeoutMs !== undefined && runtime.timeout === undefined) {
         throw new Error('timeoutMs is not available for this PTC runtime')
       }
@@ -383,7 +382,7 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
       }
       const standingPolicy = runtime.sandboxMode === undefined ? undefined : options.resolveSandboxPolicy(exec)
       let policy = standingPolicy
-      if (args.sandbox_permissions !== undefined && args.justification !== undefined) {
+      if (args.sandbox_permissions !== undefined || args.justification !== undefined) {
         if (standingPolicy === undefined) throw new Error('sandbox_permissions is not available for this PTC runtime')
         const approvedMode = await approveEscalation({
           requestedMode: args.sandbox_permissions,
