@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-With `dsh-web-fetch-http`, the harness can fetch public HTTP(S) pages through the web service (`ctx.web`) and get their status code plus bounded, decoded content without sending credentials. Choose it when a composition needs safe retrieval with URL validation, public-address resolution, connection pinning, same-origin redirects, byte and character caps, and an explicit product `User-Agent`. It returns non-2xx responses as results rather than errors, and rejects non-public destinations, binary data, and unsupported content types. The model-facing `web_fetch` tool lives in `dsh-tool-web`, which renders this provider's bodies.
+With `dsh-web-fetch-http`, the harness can fetch public HTTP(S) pages through the web service (`ctx.web`) and get their status code plus bounded, decoded content without sending credentials. Choose it when a composition needs safe retrieval with URL validation, public-address resolution, connection pinning, same-origin redirects, byte and character caps, and an explicit product `User-Agent`. It returns non-2xx responses as results rather than errors, and rejects destinations that are neither public unicast nor a transparent proxy's fake-IP pool (198.18.0.0/15), plus binary data and unsupported content types. The model-facing `web_fetch` tool lives in `dsh-tool-web`, which renders this provider's bodies.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Mount the provider in a composition that already loads the web service; it regis
 
 ### When to choose it
 
-Choose this backend when a deployment must fetch public pages with bounded output and safe transport: no credentials are sent, every resolved address must be public, each connection is pinned to the validated answer set, redirects cannot escape the origin, and every response is capped.
+Choose this backend when a deployment must fetch public pages with bounded output and safe transport: no credentials are sent, every resolved address must be public unicast or a fake-IP pool address (198.18.0.0/15) that a local transparent proxy maps back to the domain, each connection is pinned to the validated answer set, redirects cannot escape the origin, and every response is capped.
 
 ### Minimal configuration
 
@@ -61,7 +61,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 ### Transport behavior
 
-The provider keeps requests anonymous and bounded: it accepts only `http:` and `https:` URLs without embedded credentials and rejects URLs over 2,048 characters. It resolves each hostname once, rejects the complete result if any IPv4 or IPv6 address is not public unicast, and pins the connection to that validated set. IPv6 checks discover the active DNS64 prefix and reject translations to non-public IPv4. Each same-origin redirect repeats resolution and pinning; cross-origin redirects fail and require a fresh call. The provider also enforces byte, character, hop, and time caps, rejects unsupported content types, and sends an explicit product `User-Agent`.
+The provider keeps requests anonymous and bounded: it accepts only `http:` and `https:` URLs without embedded credentials and rejects URLs over 2,048 characters. It resolves each hostname once, rejects the complete result if any IPv4 or IPv6 address is neither public unicast nor a fake-IP pool address (198.18.0.0/15, the range transparent proxies hand out in fake-IP mode and map back to the queried domain), and pins the connection to that validated set. IPv6 checks discover the active DNS64 prefix and reject translations to IPv4 outside the same acceptance set. Each same-origin redirect repeats resolution and pinning; cross-origin redirects fail and require a fresh call. The provider also enforces byte, character, hop, and time caps, rejects unsupported content types, and sends an explicit product `User-Agent`.
 
 ### Failures and recovery
 
@@ -96,7 +96,7 @@ The package is built on one separation and one layered timeout:
 
 ### Read path
 
-A fetch validates the URL, resolves the hostname once, rejects the complete answer set when any address is not public, and pins the connection to the accepted addresses. It repeats that check for each same-origin redirect; a cross-origin redirect or non-public target fails before response bytes are accepted. The final response is classified by `Content-Type`, decoded from its declared charset, and read under the byte cap; the decoded text is then truncated to the character cap.
+A fetch validates the URL, resolves the hostname once, rejects the complete answer set when any address is neither public unicast nor an accepted fake-IP pool address, and pins the connection to the accepted addresses. It repeats that check for each same-origin redirect; a cross-origin redirect or non-public target fails before response bytes are accepted. The final response is classified by `Content-Type`, decoded from its declared charset, and read under the byte cap; the decoded text is then truncated to the character cap.
 
 </details>
 

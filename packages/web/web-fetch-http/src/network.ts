@@ -1,5 +1,5 @@
 /**
- * Public-network resolution and address-pinned HTTP transport for `web-fetch-http`.
+ * Destination-validated resolution and address-pinned HTTP transport for `web-fetch-http`.
  * One DNS answer set is validated before Undici receives it through a custom lookup,
  * so the connection cannot resolve the hostname again to a private address.
  *
@@ -44,6 +44,23 @@ interface Nat64Prefix {
 }
 
 /**
+ * Parse one address literal, or undefined when `ipaddr` cannot read it. Node's
+ * `isIP` and `ipaddr` disagree on several literals (leading zeros, trailing
+ * whitespace, a trailing dot), so an unreadable answer must classify as
+ * non-public instead of failing the request.
+ * @param input - textual IPv4 or IPv6 address.
+ * @returns the parsed address, or undefined when it is not an address `ipaddr` reads.
+ */
+function parseAddressLiteral(input: string): ipaddr.IPv4 | ipaddr.IPv6 | undefined {
+  try {
+    return ipaddr.parse(stripIpv6Brackets(input))
+  } catch {
+    // An unreadable literal is not an address, so it is never a connectable destination.
+    return undefined
+  }
+}
+
+/**
  * Return whether an address is globally reachable unicast. IPv4-mapped IPv6 is
  * classified by its embedded IPv4 address; transition and translation prefixes
  * remain blocked because their eventual IPv4 destination cannot be pinned here.
@@ -52,20 +69,48 @@ interface Nat64Prefix {
  * @returns true only for a public unicast destination.
  */
 export function isPublicIpAddress(input: string): boolean {
-  let parsed: ipaddr.IPv4 | ipaddr.IPv6
-  try {
-    parsed = ipaddr.parse(stripIpv6Brackets(input))
-  } catch {
-    return false
-  }
+  const parsed = parseAddressLiteral(input)
+  if (parsed === undefined) return false
   if (parsed instanceof ipaddr.IPv4) return parsed.range() === 'unicast'
   if (parsed.isIPv4MappedAddress()) return parsed.toIPv4Address().range() === 'unicast'
   return parsed.range() === 'unicast'
 }
 
 /**
+ * RFC 2544 benchmarking range that transparent proxies hand out in fake-IP mode
+ * (Clash/mihomo `fake-ip-range`, sing-box `inet4_range`, Surge enhanced mode):
+ * the proxy's DNS answers each proxied domain with a pool address, and its TUN
+ * device maps a connection to a pool address back to the queried domain.
+ */
+const FAKEIP_POOL_RANGE = ipaddr.IPv4.parseCIDR('198.18.0.0/15')
+
+/**
+ * Whether an address belongs to the fake-IP pool. The pool is IPv4-only, and an
+ * IPv4-mapped IPv6 answer classifies through its embedded IPv4 address; any
+ * native IPv6 answer, and any literal `ipaddr` cannot read, stays outside the pool.
+ * @param input - textual IPv4 or IPv6 address.
+ * @returns true only for a fake-IP pool destination.
+ */
+function isFakeIpPoolAddress(input: string): boolean {
+  const parsed = parseAddressLiteral(input)
+  const embedded = parsed instanceof ipaddr.IPv6 && parsed.isIPv4MappedAddress() ? parsed.toIPv4Address() : parsed
+  return embedded instanceof ipaddr.IPv4 && embedded.match(FAKEIP_POOL_RANGE)
+}
+
+/**
+ * A destination the pinned transport may connect to: a public unicast address,
+ * or a fake-IP pool address whose transparent proxy maps it back to the queried
+ * domain. Every other non-unicast range (loopback, private, link-local, CGNAT,
+ * reserved) stays rejected.
+ */
+function isConnectableAddress(input: string): boolean {
+  return isPublicIpAddress(input) || isFakeIpPoolAddress(input)
+}
+
+/**
  * Resolve a hostname once and reject the complete answer set if any destination
- * is not public. The returned addresses are the only ones the transport may use.
+ * is neither public unicast nor a fake-IP pool address. The returned addresses
+ * are the only ones the transport may use.
  *
  * @param hostname - URL hostname, including brackets when it is an IPv6 literal.
  * @param signal - aborts the wait for system resolution; an in-flight OS lookup may finish unused.
@@ -97,11 +142,11 @@ export async function resolvePublicAddresses(
     if ((entry.family !== 4 && entry.family !== 6) || isIP(entry.address) !== entry.family) {
       throw new WebError(`hostname "${hostname}" resolved to an invalid IP address`, 'WEB_PROVIDER_ERROR')
     }
-    if (!isPublicIpAddress(entry.address)) {
+    if (!isConnectableAddress(entry.address)) {
       throw new WebError(`URL hostname "${hostname}" resolves to a non-public IP address`, 'WEB_BLOCKED_URL')
     }
     const translatedIpv4 = translatedIpv4Address(entry.address, nat64Prefixes)
-    if (translatedIpv4 !== undefined && !isPublicIpAddress(translatedIpv4)) {
+    if (translatedIpv4 !== undefined && !isConnectableAddress(translatedIpv4)) {
       throw new WebError(`URL hostname "${hostname}" resolves through NAT64 to a non-public IPv4 address`, 'WEB_BLOCKED_URL')
     }
     addresses.push({ address: entry.address, family: entry.family })
