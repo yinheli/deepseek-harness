@@ -106,6 +106,7 @@ describe('public-network policy', () => {
       '127.0.0.1',
       '169.254.169.254',
       '192.0.2.1',
+      '198.18.43.217',
       '224.0.0.1',
       '255.255.255.255',
       '::',
@@ -114,6 +115,7 @@ describe('public-network policy', () => {
       'fc00::1',
       'ff02::1',
       '::ffff:127.0.0.1',
+      '::ffff:198.18.43.217',
       '64:ff9b::808:808',
       'not-an-ip',
     ]) {
@@ -130,6 +132,33 @@ describe('public-network policy', () => {
       .resolves.toEqual([
         { address: '8.8.4.4', family: 4 },
         { address: '2001:4860:4860::8888', family: 6 },
+      ])
+  })
+
+  it('accepts a DNS answer set inside the transparent-proxy fake-IP pool', async () => {
+    // Pool edges included: 198.18.0.0/15 spans 198.18.0.0 – 198.19.255.255.
+    const resolver = vi.fn(async () => [
+      { address: '198.18.0.0', family: 4 },
+      { address: '198.19.255.255', family: 4 },
+    ])
+    await expect(resolvePublicAddresses('fakeip.test', new AbortController().signal, resolver))
+      .resolves.toEqual([
+        { address: '198.18.0.0', family: 4 },
+        { address: '198.19.255.255', family: 4 },
+      ])
+  })
+
+  it('accepts an IPv4-mapped fake-IP address alongside public answers', async () => {
+    const resolver = vi.fn(async (hostname: string) => hostname === 'ipv4only.arpa'
+      ? []
+      : [
+        { address: '8.8.8.8', family: 4 },
+        { address: '::ffff:198.18.43.217', family: 6 },
+      ])
+    await expect(resolvePublicAddresses('mixed.test', new AbortController().signal, resolver))
+      .resolves.toEqual([
+        { address: '8.8.8.8', family: 4 },
+        { address: '::ffff:198.18.43.217', family: 6 },
       ])
   })
 

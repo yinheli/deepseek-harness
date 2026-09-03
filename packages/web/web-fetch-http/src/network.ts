@@ -1,5 +1,5 @@
 /**
- * Public-network resolution and address-pinned HTTP transport for `web-fetch-http`.
+ * Destination-validated resolution and address-pinned HTTP transport for `web-fetch-http`.
  * One DNS answer set is validated before Undici receives it through a custom lookup,
  * so the connection cannot resolve the hostname again to a private address.
  *
@@ -64,8 +64,43 @@ export function isPublicIpAddress(input: string): boolean {
 }
 
 /**
+ * RFC 2544 benchmarking range that transparent proxies hand out in fake-IP mode
+ * (Clash/mihomo `fake-ip-range`, sing-box `inet4_range`, Surge enhanced mode):
+ * the proxy's DNS answers each proxied domain with a pool address, and its TUN
+ * device maps a connection to a pool address back to the queried domain.
+ */
+const FAKEIP_POOL_RANGE = ipaddr.IPv4.parseCIDR('198.18.0.0/15')
+
+/**
+ * Whether an address belongs to the fake-IP pool. The pool is IPv4-only, and an
+ * IPv4-mapped IPv6 answer classifies through its embedded IPv4 address; any
+ * native IPv6 answer stays outside the pool.
+ */
+function isFakeIpPoolAddress(input: string): boolean {
+  let parsed: ipaddr.IPv4 | ipaddr.IPv6
+  try {
+    parsed = ipaddr.parse(stripIpv6Brackets(input))
+  } catch {
+    return false
+  }
+  if (parsed instanceof ipaddr.IPv6 && parsed.isIPv4MappedAddress()) parsed = parsed.toIPv4Address()
+  return parsed instanceof ipaddr.IPv4 && parsed.match(FAKEIP_POOL_RANGE)
+}
+
+/**
+ * A destination the pinned transport may connect to: a public unicast address,
+ * or a fake-IP pool address whose transparent proxy maps it back to the queried
+ * domain. Every other non-unicast range (loopback, private, link-local, CGNAT,
+ * reserved) stays rejected.
+ */
+function isConnectableAddress(input: string): boolean {
+  return isPublicIpAddress(input) || isFakeIpPoolAddress(input)
+}
+
+/**
  * Resolve a hostname once and reject the complete answer set if any destination
- * is not public. The returned addresses are the only ones the transport may use.
+ * is neither public unicast nor a fake-IP pool address. The returned addresses
+ * are the only ones the transport may use.
  *
  * @param hostname - URL hostname, including brackets when it is an IPv6 literal.
  * @param signal - aborts the wait for system resolution; an in-flight OS lookup may finish unused.
@@ -97,11 +132,11 @@ export async function resolvePublicAddresses(
     if ((entry.family !== 4 && entry.family !== 6) || isIP(entry.address) !== entry.family) {
       throw new WebError(`hostname "${hostname}" resolved to an invalid IP address`, 'WEB_PROVIDER_ERROR')
     }
-    if (!isPublicIpAddress(entry.address)) {
+    if (!isConnectableAddress(entry.address)) {
       throw new WebError(`URL hostname "${hostname}" resolves to a non-public IP address`, 'WEB_BLOCKED_URL')
     }
     const translatedIpv4 = translatedIpv4Address(entry.address, nat64Prefixes)
-    if (translatedIpv4 !== undefined && !isPublicIpAddress(translatedIpv4)) {
+    if (translatedIpv4 !== undefined && !isConnectableAddress(translatedIpv4)) {
       throw new WebError(`URL hostname "${hostname}" resolves through NAT64 to a non-public IPv4 address`, 'WEB_BLOCKED_URL')
     }
     addresses.push({ address: entry.address, family: entry.family })
