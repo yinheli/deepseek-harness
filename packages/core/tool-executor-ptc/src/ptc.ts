@@ -13,7 +13,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import type { ContentBlock, ToolCallId, ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { PtcBindingFunction, PtcRunResult, PtcRunSandbox, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
-import { approveEscalation, ESCALATION_TARGETS, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+import { approveEscalation, ESCALATION_TARGETS } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-working-directory'
@@ -344,7 +344,6 @@ export function createRunCodeTool(
       }
       const runtime = requirePtcRuntime(ctx)
       const run = async (callSignal: AbortSignal): Promise<RunCodeOutput> => {
-        validateEscalationArgs(args.sandbox_permissions, args.justification)
         if (args.timeoutMs !== undefined && runtime.timeout === undefined) {
           throw new Error('timeoutMs is not available for this PTC runtime')
         }
@@ -353,7 +352,7 @@ export function createRunCodeTool(
         }
         const standingPolicy = runtime.sandboxMode === undefined ? undefined : resolveSandboxPolicy(ctx, exec)
         let policy = standingPolicy
-        if (args.sandbox_permissions !== undefined && args.justification !== undefined) {
+        if (args.sandbox_permissions !== undefined || args.justification !== undefined) {
           if (standingPolicy === undefined) throw new Error('sandbox_permissions is not available for this PTC runtime')
           const approvedMode = await approveEscalation({
             requestedMode: args.sandbox_permissions,
